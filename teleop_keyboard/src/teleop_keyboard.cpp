@@ -4,14 +4,21 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <vector>
 
 namespace teleop_tools {
-TeleopKeyboard::TeleopKeyboard() : rclcpp::Node("teleop_keyboard") {
+TeleopKeyboard::TeleopKeyboard()
+    : rclcpp::Node("teleop_keyboard"), useSmoothAcceleration_(false),
+      velocity_({0.0, 0.0}) {
   cmd_pub_ =
       this->create_publisher<geometry_msgs::msg::TwistStamped>("key_vel", 10);
-  PrintInstructions();
-  timer_ = this->create_wall_timer(std::chrono::milliseconds(100),
+  printInstructions();
+  this->enableRawMode();
+  timer_ = this->create_wall_timer(std::chrono::milliseconds(50),
                                    std::bind(&TeleopKeyboard::run, this));
+  status_timer_ =
+      this->create_wall_timer(std::chrono::milliseconds(500),
+                              std::bind(&TeleopKeyboard::printStatus, this));
 }
 
 TeleopKeyboard::~TeleopKeyboard() { disableRawMode(); }
@@ -29,44 +36,76 @@ void TeleopKeyboard::disableRawMode() {
   tcsetattr(STDIN_FILENO, TCSANOW, &old_termios_);
 }
 
-void TeleopKeyboard::PrintInstructions() {
+void TeleopKeyboard::printInstructions() {
   std::cout << "\nTeleoperation using Arrow Keys:\n";
-  std::cout << "  Up Arrow        : Move Forward" << '\n';
-  std::cout << "  Down Arrow      : Move Backward" << '\n';
-  std::cout << "  Left Arrow      : Turn Left" << '\n';
-  std::cout << "  Right Arrow     : Turn Right" << '\n';
-  std::cout << "  Space           : Stop" << '\n';
+  std::cout << "  Up Arrow        : Move Forward\n";
+  std::cout << "  Down Arrow      : Move Backward\n";
+  std::cout << "  Left Arrow      : Turn Left\n";
+  std::cout << "  Right Arrow     : Turn Right\n";
+  std::cout << "  Space           : Stop\n";
+  std::cout << "Press 'm' to toggle acceleration mode (Smooth/Instant).\n";
   std::cout << "Press 'q' to exit.\n";
 }
 
+void TeleopKeyboard::printStatus() {
+  std::cout << "\rCurrent Twist: Linear X: " << velocity_[0]
+            << " Angular Z: " << velocity_[1]
+            << " Mode: " << (useSmoothAcceleration_ ? "Smooth" : "Instant")
+            << "    " << std::flush;
+}
+
 void TeleopKeyboard::run() {
-  auto twist_message = geometry_msgs::msg::TwistStamped();
   auto ch = getchar();
+  std::vector<double> targetVelocity = {0.0, 0.0};
+  const double max_speed = 1.0;
+  const double max_acceleration = 0.1;
   if (ch == 27) {
     if (getchar() == '[') {
       switch (getchar()) {
       case 'A':
-        twist_message.twist.linear.x = 1.0;
+        targetVelocity[0] = max_speed;
         break;
       case 'B':
-        twist_message.twist.linear.x = -1.0;
+        targetVelocity[0] = -max_speed;
         break;
       case 'C':
-        twist_message.twist.angular.z = -1.0;
+        targetVelocity[1] = -max_speed;
         break;
       case 'D':
-        twist_message.twist.angular.z = 1.0;
+        targetVelocity[1] = max_speed;
         break;
       default:
-        twist_message.twist.linear.x = 0.0;
-        twist_message.twist.angular.z = 0.0;
         break;
       }
     }
+  } else if (ch == 'm') {
+    useSmoothAcceleration_ = !useSmoothAcceleration_;
   } else if (ch == 'q') {
     rclcpp::shutdown();
   }
+
+  if (useSmoothAcceleration_) {
+    updateVelocity(velocity_, targetVelocity, max_acceleration);
+  } else {
+    velocity_ = targetVelocity;
+  }
+  auto twist_message = geometry_msgs::msg::TwistStamped();
   twist_message.header.stamp = this->now();
+  twist_message.twist.linear.x = velocity_[0];
+  twist_message.twist.angular.z = velocity_[1];
   cmd_pub_->publish(twist_message);
 }
+
+void TeleopKeyboard::updateVelocity(std::vector<double> &velocity,
+                                    const std::vector<double> &target,
+                                    double step) {
+  for (size_t i = 0; i < velocity.size(); ++i) {
+    if (velocity[i] < target[i]) {
+      velocity[i] = std::min(velocity[i] + step, target[i]);
+    } else if (velocity[i] > target[i]) {
+      velocity[i] = std::max(velocity[i] - step, target[i]);
+    }
+  }
+}
+
 } // namespace teleop_tools
