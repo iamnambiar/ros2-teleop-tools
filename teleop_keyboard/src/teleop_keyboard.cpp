@@ -34,6 +34,7 @@ void TeleopKeyboard::enableRawMode() {
 
 void TeleopKeyboard::disableRawMode() {
   tcsetattr(STDIN_FILENO, TCSANOW, &old_termios_);
+  std::cout << '\n';
 }
 
 void TeleopKeyboard::printInstructions() {
@@ -48,17 +49,18 @@ void TeleopKeyboard::printInstructions() {
 }
 
 void TeleopKeyboard::printStatus() {
-  std::cout << "\rCurrent Twist: Linear X: " << velocity_[0]
+  std::cout << std::setprecision(2) << std::fixed
+            << "\rCurrent Twist: Linear X: " << velocity_[0]
             << " Angular Z: " << velocity_[1]
-            << " Mode: " << (useSmoothAcceleration_ ? "Smooth" : "Instant")
-            << "    " << std::flush;
+            << " Mode: " << (useSmoothAcceleration_ ? "Smooth--" : "Instant")
+            << "----------" << std::flush;
 }
 
 void TeleopKeyboard::run() {
   auto ch = getchar();
   std::vector<double> targetVelocity = {0.0, 0.0};
   const double max_speed = 1.0;
-  const double max_acceleration = 0.1;
+  const double max_acceleration = 0.05;
   if (ch == 27) {
     if (getchar() == '[') {
       switch (getchar()) {
@@ -94,6 +96,7 @@ void TeleopKeyboard::run() {
   twist_message.twist.linear.x = velocity_[0];
   twist_message.twist.angular.z = velocity_[1];
   cmd_pub_->publish(twist_message);
+  tcflush(STDIN_FILENO, TCIFLUSH);
 }
 
 void TeleopKeyboard::updateVelocity(std::vector<double> &velocity,
